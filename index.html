@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ThreadScope - Java Thread Dump Analyzer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Java Diagnostics Workbench</p>
+          <h1>ThreadScope</h1>
+          <p class="hero-text">
+            Paste or upload a Java thread dump to inspect thread states, lock
+            ownership, contention chains, suspected deadlocks, and repeated stack
+            hotspots.
+          </p>
+        </div>
+        <div class="hero-stats" id="heroStats">
+          <div class="stat-card accent">
+            <span class="stat-label">Threads</span>
+            <strong class="stat-value">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Blocked</span>
+            <strong class="stat-value">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Deadlocks</span>
+            <strong class="stat-value">0</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel input-panel">
+          <div class="panel-header">
+            <h2>Input</h2>
+            <div class="actions">
+              <button id="sampleBtn" class="ghost-button">Load Sample</button>
+              <label class="file-button">
+                Upload Dump
+                <input id="fileInput" type="file" accept=".txt,.log,.out" hidden />
+              </label>
+              <label class="file-button">
+                Upload Snapshots
+                <input id="multiFileInput" type="file" accept=".txt,.log,.out" multiple hidden />
+              </label>
+            </div>
+          </div>
+          <textarea
+            id="dumpInput"
+            spellcheck="false"
+            placeholder="Paste a Java thread dump here, or paste multiple snapshots separated by a line containing ===== SNAPSHOT ====="
+          ></textarea>
+          <div class="toolbar">
+            <button id="analyzeBtn" class="primary-button">Analyze Dump</button>
+            <button id="clearBtn" class="ghost-button">Clear</button>
+            <span id="statusText" class="status-text">Ready</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Summary</h2>
+          </div>
+          <div id="summaryGrid" class="summary-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Findings</h2>
+          </div>
+          <div id="findings" class="stack-list empty-state">
+            Run an analysis to see prioritized findings.
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Lock Graph</h2>
+          </div>
+          <div id="lockGraph" class="stack-list empty-state">
+            Waiting and ownership relationships will appear here.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Pool Insights</h2>
+          </div>
+          <div id="poolPanel" class="pool-grid empty-state">
+            Thread pool insights will appear after analysis.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Root-Cause Lock Chains</h2>
+          </div>
+          <div id="lockChainsPanel" class="stack-list empty-state">
+            Root-cause lock chains will appear after analysis.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Snapshot Comparison</h2>
+          </div>
+          <div id="comparisonPanel" class="comparison-grid empty-state">
+            Analyze multiple snapshots to compare state shifts and persistent contention.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Timeline View</h2>
+          </div>
+          <div id="timelinePanel" class="timeline-grid empty-state">
+            Analyze multiple snapshots to see state movement over time.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Thread History</h2>
+            <div class="filters">
+              <select id="historyThreadSelect">
+                <option value="">Choose a thread history</option>
+              </select>
+            </div>
+          </div>
+          <div id="threadHistoryPanel" class="thread-history empty-state">
+            Select a thread that appears across snapshots to inspect its path over time.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Snapshot Diff</h2>
+            <div class="filters">
+              <select id="leftSnapshotSelect">
+                <option value="">Left snapshot</option>
+              </select>
+              <select id="rightSnapshotSelect">
+                <option value="">Right snapshot</option>
+              </select>
+            </div>
+          </div>
+          <div id="snapshotDiffPanel" class="diff-grid empty-state">
+            Pick two snapshots to compare changes side by side.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Export Report</h2>
+            <div class="actions">
+              <select id="exportFormatSelect" class="export-select">
+                <option value="md">Markdown</option>
+                <option value="html">HTML</option>
+                <option value="json">JSON</option>
+              </select>
+              <button id="exportBtn" class="primary-button">Export</button>
+            </div>
+          </div>
+          <div id="exportStatus" class="status-text">
+            Export the current analysis as Markdown, HTML, or JSON.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Ownership View</h2>
+          </div>
+          <div id="ownershipPanel" class="ownership-grid empty-state">
+            Tool ownership metadata will appear here.
+          </div>
+        </section>
+
+        <section class="panel wide-panel">
+          <div class="panel-header">
+            <h2>Threads</h2>
+            <div class="filters">
+              <input id="threadSearch" type="search" placeholder="Filter threads" />
+              <select id="stateFilter">
+                <option value="ALL">All states</option>
+              </select>
+            </div>
+          </div>
+          <div id="threadList" class="thread-list empty-state">
+            No thread data yet.
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./src/analyzer.js"></script>
+    <script src="./src/app.js"></script>
+  </body>
+</html>

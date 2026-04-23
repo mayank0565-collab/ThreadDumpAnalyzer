@@ -1,0 +1,91 @@
+"http-nio-8080-exec-17" #112 daemon prio=5 os_prio=31 tid=0x0000000124aa1000 nid=0x7103 waiting for monitor entry [0x00000001711a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.checkout.InventoryService.reserve(InventoryService.java:118)
+        - waiting to lock <0x000000076b221100> (a java.lang.Object)
+        at com.acme.checkout.OrderService.placeOrder(OrderService.java:67)
+
+"http-nio-8080-exec-18" #113 daemon prio=5 os_prio=31 tid=0x0000000124aa1800 nid=0x7104 waiting for monitor entry [0x00000001712a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.checkout.InventoryService.reserve(InventoryService.java:118)
+        - waiting to lock <0x000000076b221100> (a java.lang.Object)
+        at com.acme.checkout.OrderService.placeOrder(OrderService.java:67)
+
+"inventory-rebuild-job" #121 prio=5 os_prio=31 tid=0x0000000124aa2000 nid=0x7105 runnable [0x00000001713a3000]
+   java.lang.Thread.State: RUNNABLE
+        at com.acme.checkout.InventoryService.reserve(InventoryService.java:116)
+        - locked <0x000000076b221100> (a java.lang.Object)
+        at com.acme.jobs.InventoryRebuildJob.run(InventoryRebuildJob.java:22)
+
+"deadlock-left" #141 prio=5 os_prio=31 tid=0x0000000124aa3000 nid=0x7107 waiting for monitor entry [0x00000001715a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.LeftRightService.transfer(LeftRightService.java:55)
+        - waiting to lock <0x000000076b333000> (a java.lang.Object)
+        - locked <0x000000076b333100> (a java.lang.Object)
+
+"deadlock-right" #142 prio=5 os_prio=31 tid=0x0000000124aa3800 nid=0x7108 waiting for monitor entry [0x00000001716a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.RightLeftService.transfer(RightLeftService.java:48)
+        - waiting to lock <0x000000076b333100> (a java.lang.Object)
+        - locked <0x000000076b333000> (a java.lang.Object)
+
+===== SNAPSHOT =====
+
+"http-nio-8080-exec-17" #112 daemon prio=5 os_prio=31 tid=0x0000000124aa1000 nid=0x7103 waiting for monitor entry [0x00000001711a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.checkout.InventoryService.reserve(InventoryService.java:118)
+        - waiting to lock <0x000000076b221100> (a java.lang.Object)
+        at com.acme.checkout.OrderService.placeOrder(OrderService.java:67)
+
+"http-nio-8080-exec-18" #113 daemon prio=5 os_prio=31 tid=0x0000000124aa1800 nid=0x7104 waiting for monitor entry [0x00000001712a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.checkout.InventoryService.reserve(InventoryService.java:118)
+        - waiting to lock <0x000000076b221100> (a java.lang.Object)
+        at com.acme.checkout.OrderService.placeOrder(OrderService.java:67)
+
+"inventory-rebuild-job" #121 prio=5 os_prio=31 tid=0x0000000124aa2000 nid=0x7105 waiting for monitor entry [0x00000001713a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.jobs.InventoryRebuildJob.run(InventoryRebuildJob.java:23)
+        - waiting to lock <0x000000076b444100> (a java.lang.Object)
+        - locked <0x000000076b221100> (a java.lang.Object)
+
+"deadlock-left" #141 prio=5 os_prio=31 tid=0x0000000124aa3000 nid=0x7107 waiting for monitor entry [0x00000001715a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.LeftRightService.transfer(LeftRightService.java:55)
+        - waiting to lock <0x000000076b333000> (a java.lang.Object)
+        - locked <0x000000076b333100> (a java.lang.Object)
+
+"deadlock-right" #142 prio=5 os_prio=31 tid=0x0000000124aa3800 nid=0x7108 waiting for monitor entry [0x00000001716a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.RightLeftService.transfer(RightLeftService.java:48)
+        - waiting to lock <0x000000076b333100> (a java.lang.Object)
+        - locked <0x000000076b333000> (a java.lang.Object)
+
+===== SNAPSHOT =====
+
+"http-nio-8080-exec-17" #112 daemon prio=5 os_prio=31 tid=0x0000000124aa1000 nid=0x7103 runnable [0x00000001711a3000]
+   java.lang.Thread.State: RUNNABLE
+        at com.acme.checkout.PaymentService.capture(PaymentService.java:72)
+        at com.acme.checkout.OrderService.placeOrder(OrderService.java:71)
+
+"http-nio-8080-exec-18" #113 daemon prio=5 os_prio=31 tid=0x0000000124aa1800 nid=0x7104 waiting on condition [0x00000001712a3000]
+   java.lang.Thread.State: WAITING (parking)
+        at jdk.internal.misc.Unsafe.park(Native Method)
+        - parking to wait for <0x000000076b551100> (a java.util.concurrent.CompletableFuture$Signaller)
+        at java.util.concurrent.locks.LockSupport.park(LockSupport.java:211)
+
+"inventory-rebuild-job" #121 prio=5 os_prio=31 tid=0x0000000124aa2000 nid=0x7105 runnable [0x00000001713a3000]
+   java.lang.Thread.State: RUNNABLE
+        at com.acme.jobs.InventoryRebuildJob.run(InventoryRebuildJob.java:34)
+        at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+
+"deadlock-left" #141 prio=5 os_prio=31 tid=0x0000000124aa3000 nid=0x7107 waiting for monitor entry [0x00000001715a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.LeftRightService.transfer(LeftRightService.java:55)
+        - waiting to lock <0x000000076b333000> (a java.lang.Object)
+        - locked <0x000000076b333100> (a java.lang.Object)
+
+"deadlock-right" #142 prio=5 os_prio=31 tid=0x0000000124aa3800 nid=0x7108 waiting for monitor entry [0x00000001716a3000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at com.acme.locking.RightLeftService.transfer(RightLeftService.java:48)
+        - waiting to lock <0x000000076b333100> (a java.lang.Object)
+        - locked <0x000000076b333000> (a java.lang.Object)

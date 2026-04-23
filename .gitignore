@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+
+# IntelliJ / IDE
+.idea/
+*.iml
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Build folders (if you add later)
+dist/
+build/
+
+# Logs
+*.log
+
+# Optional: ignore sample dumps if sensitive
+# data/*.txt
