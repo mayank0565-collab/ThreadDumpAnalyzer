@@ -3,6 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="ThreadScope is a privacy-first browser-based Java thread dump analyzer with deadlock detection, snapshot comparison, and local-only processing."
+    />
     <title>ThreadScope - Java Thread Dump Analyzer</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -50,6 +54,13 @@
               </label>
             </div>
           </div>
+          <div class="privacy-banner">
+            All processing happens locally in your browser. No data is uploaded.
+          </div>
+          <div id="dropZone" class="drop-zone">
+            <strong>Drop thread dump files here</strong>
+            <span>Drop a single dump/log file or multiple snapshot files. ThreadScope keeps everything local to this tab.</span>
+          </div>
           <textarea
             id="dumpInput"
             spellcheck="false"
@@ -58,7 +69,7 @@
           <div class="toolbar">
             <button id="analyzeBtn" class="primary-button">Analyze Dump</button>
             <button id="clearBtn" class="ghost-button">Clear</button>
-            <span id="statusText" class="status-text">Ready</span>
+            <span id="statusText" class="status-text" aria-live="polite">Ready</span>
           </div>
         </section>
 
@@ -166,7 +177,7 @@
               <button id="exportBtn" class="primary-button">Export</button>
             </div>
           </div>
-          <div id="exportStatus" class="status-text">
+          <div id="exportStatus" class="status-text" aria-live="polite">
             Export the current analysis as Markdown, HTML, or JSON.
           </div>
         </section>
@@ -189,6 +200,10 @@
                 <option value="ALL">All states</option>
               </select>
             </div>
+          </div>
+          <div class="thread-toolbar">
+            <span id="threadListSummary" class="status-text">No thread data yet.</span>
+            <button id="loadMoreThreadsBtn" class="ghost-button" hidden>Show more threads</button>
           </div>
           <div id="threadList" class="thread-list empty-state">
             No thread data yet.

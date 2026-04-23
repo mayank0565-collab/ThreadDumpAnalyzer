@@ -9,6 +9,8 @@ function makeElement(id) {
     textContent: "",
     className: "",
     files: [],
+    hidden: false,
+    disabled: false,
     style: {},
     listeners: {},
     addEventListener(type, callback) {
@@ -29,6 +31,7 @@ const ids = [
   "sampleBtn",
   "fileInput",
   "multiFileInput",
+  "dropZone",
   "statusText",
   "heroStats",
   "summaryGrid",
@@ -47,6 +50,8 @@ const ids = [
   "exportBtn",
   "exportStatus",
   "ownershipPanel",
+  "threadListSummary",
+  "loadMoreThreadsBtn",
   "threadList",
   "threadSearch",
   "stateFilter",
@@ -61,6 +66,7 @@ elements.exportFormatSelect.value = "json";
 
 const document = {
   body: {
+    className: "",
     appendChild() {},
     removeChild() {},
   },
@@ -108,11 +114,18 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(new URL("../src/analyzer.js", import.meta.url), "utf8"), context);
 vm.runInContext(fs.readFileSync(new URL("../src/app.js", import.meta.url), "utf8"), context);
 
+function waitForUi() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 if (!elements.sampleBtn.listeners.click) {
   throw new Error("sample button listener missing");
 }
 
 elements.sampleBtn.listeners.click({ target: elements.sampleBtn });
+await waitForUi();
 
 if (!/Auto-detected 3 snapshots/.test(elements.statusText.textContent)) {
   throw new Error(`Unexpected sample-load status: ${elements.statusText.textContent}`);
@@ -146,6 +159,10 @@ if (!/diff-card/.test(elements.snapshotDiffPanel.innerHTML)) {
   throw new Error("Snapshot diff panel did not render.");
 }
 
+if (!/Showing/.test(elements.threadListSummary.textContent)) {
+  throw new Error(`Unexpected thread list summary: ${elements.threadListSummary.textContent}`);
+}
+
 elements.exportBtn.listeners.click({ target: elements.exportBtn });
 
 if (!downloaded || downloaded.download !== "threadscope-report.json") {
@@ -161,6 +178,11 @@ elements.threadSearch.listeners.input({ target: elements.threadSearch });
 
 if (!/deadlock-left/.test(elements.threadList.innerHTML)) {
   throw new Error("Thread filter did not render expected deadlock thread.");
+}
+
+const indexHtml = fs.readFileSync(new URL("../index.html", import.meta.url), "utf8");
+if (!/All processing happens locally in your browser\. No data is uploaded\./.test(indexHtml)) {
+  throw new Error("Privacy notice is missing from index.html.");
 }
 
 elements.clearBtn.listeners.click({ target: elements.clearBtn });

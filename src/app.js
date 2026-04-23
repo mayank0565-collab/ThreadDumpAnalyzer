@@ -8,6 +8,7 @@
   var TOOL_NAME = "ThreadScope";
   var TOOL_AUTHOR = "Mayank Vashishtha";
   var TOOL_ROLE = "Author and Owner";
+  var THREAD_RENDER_BATCH = 80;
 
   if (!analyzeDump || !compareSnapshots || !detectSnapshots || !buildSnapshotDiff) {
     window.console.error("ThreadScope analyzer API was not loaded correctly.");
@@ -225,6 +226,7 @@
   var sampleBtn = document.querySelector("#sampleBtn");
   var fileInput = document.querySelector("#fileInput");
   var multiFileInput = document.querySelector("#multiFileInput");
+  var dropZone = document.querySelector("#dropZone");
   var statusText = document.querySelector("#statusText");
   var heroStats = document.querySelector("#heroStats");
   var summaryGrid = document.querySelector("#summaryGrid");
@@ -243,6 +245,8 @@
   var exportBtn = document.querySelector("#exportBtn");
   var exportStatus = document.querySelector("#exportStatus");
   var ownershipPanel = document.querySelector("#ownershipPanel");
+  var threadListSummary = document.querySelector("#threadListSummary");
+  var loadMoreThreadsBtn = document.querySelector("#loadMoreThreadsBtn");
   var threadListEl = document.querySelector("#threadList");
   var threadSearch = document.querySelector("#threadSearch");
   var stateFilter = document.querySelector("#stateFilter");
@@ -253,6 +257,10 @@
   var selectedHistoryKey = "";
   var selectedDiffLeftId = "";
   var selectedDiffRightId = "";
+  var analysisRequestSerial = 0;
+  var visibleThreadCount = THREAD_RENDER_BATCH;
+  var isBusy = false;
+  var isDropZoneActive = false;
 
   function setStatus(message) {
     statusText.textContent = message;
@@ -260,6 +268,51 @@
 
   function setExportStatus(message) {
     exportStatus.textContent = message;
+  }
+
+  function updateClassFlag(element, className, enabled) {
+    var current;
+    var parts;
+
+    if (!element) {
+      return;
+    }
+
+    current = element.className || "";
+    parts = current ? current.split(/\s+/).filter(Boolean) : [];
+
+    if (enabled && parts.indexOf(className) < 0) {
+      parts.push(className);
+    }
+
+    if (!enabled) {
+      parts = parts.filter(function filterPart(part) {
+        return part !== className;
+      });
+    }
+
+    element.className = parts.join(" ");
+  }
+
+  function renderDropZoneState() {
+    if (!dropZone) {
+      return;
+    }
+    dropZone.className = "drop-zone" + (isDropZoneActive ? " is-dragover" : "") + (isBusy ? " is-busy" : "");
+  }
+
+  function setBusy(nextBusy, message) {
+    isBusy = nextBusy;
+    updateClassFlag(document.body || {}, "is-busy", nextBusy);
+    analyzeBtn.disabled = nextBusy;
+    sampleBtn.disabled = nextBusy;
+    clearBtn.disabled = nextBusy;
+    exportBtn.disabled = nextBusy || !currentAnalysis || !currentAnalysis.parsed;
+    loadMoreThreadsBtn.disabled = nextBusy;
+    renderDropZoneState();
+    if (message) {
+      setStatus(message);
+    }
   }
 
   function escapeHtml(value) {
@@ -275,6 +328,61 @@
 
   function formatState(state) {
     return (state || "UNKNOWN").replace(/_/g, " ");
+  }
+
+  function sortThreadsForDisplay(threads) {
+    var stateOrder = {
+      BLOCKED: 0,
+      RUNNABLE: 1,
+      WAITING: 2,
+      TIMED_WAITING: 3,
+      UNKNOWN: 4,
+    };
+
+    return threads.slice().sort(function sortThreads(left, right) {
+      var leftRank = stateOrder[left.state] !== undefined ? stateOrder[left.state] : 5;
+      var rightRank = stateOrder[right.state] !== undefined ? stateOrder[right.state] : 5;
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.name.localeCompare(right.name);
+    });
+  }
+
+  function resetVisibleThreadCount() {
+    visibleThreadCount = THREAD_RENDER_BATCH;
+  }
+
+  function updateThreadListControls(total, shown) {
+    if (!threadListSummary || !loadMoreThreadsBtn) {
+      return;
+    }
+
+    if (!currentAnalysis || !currentAnalysis.parsed) {
+      threadListSummary.textContent = "No thread data yet.";
+      loadMoreThreadsBtn.hidden = true;
+      return;
+    }
+
+    if (!total) {
+      threadListSummary.textContent = "No threads match the current filter.";
+      loadMoreThreadsBtn.hidden = true;
+      return;
+    }
+
+    threadListSummary.textContent = "Showing " + shown + " of " + total + " matching threads.";
+    loadMoreThreadsBtn.hidden = shown >= total;
+    if (!loadMoreThreadsBtn.hidden) {
+      loadMoreThreadsBtn.textContent = "Show " + Math.min(THREAD_RENDER_BATCH, total - shown) + " more threads";
+    }
+  }
+
+  function formatParseNoteSuffix(analysis, connector) {
+    if (!analysis || !analysis.parseNotes.length) {
+      return ".";
+    }
+    return " " + connector + " " + analysis.parseNotes.length + " parse note" + (analysis.parseNotes.length === 1 ? "" : "s") + ".";
   }
 
   function getStateCount(analysis, state) {
@@ -381,13 +489,14 @@
 
     metrics = [
       ["Parsed threads", analysis.threadCount],
+      ["Snapshots", currentSnapshots.length],
       ["Blocked", getStateCount(analysis, "BLOCKED")],
       ["Waiting", getStateCount(analysis, "WAITING") + getStateCount(analysis, "TIMED_WAITING")],
       ["Runnable", getStateCount(analysis, "RUNNABLE")],
       ["Pools", analysis.poolGroups.length],
       ["Lock chains", analysis.lockChains.length],
-      ["Hotspot groups", analysis.hotspots.length],
       ["Contended monitors", analysis.monitors.filter(function filterMonitor(monitor) { return monitor.waiters.length > 0; }).length],
+      ["Parse notes", analysis.parseNotes.length],
     ];
 
     summaryGrid.innerHTML = metrics
@@ -452,6 +561,7 @@
     lockGraphEl.innerHTML = contended
       .slice(0, 20)
       .map(function mapMonitor(monitor) {
+        var monitorType = monitor.types && monitor.types.length ? monitor.types[0] : "";
         return `
           <article class="graph-card">
             <div class="card-head">
@@ -460,6 +570,7 @@
                 <div class="pill-row">
                   <span class="pill">Owners: ${monitor.owners.length || 0}</span>
                   <span class="pill">Waiters: ${monitor.waiters.length || 0}</span>
+                  ${monitorType ? `<span class="pill">${escapeHtml(monitorType)}</span>` : ""}
                 </div>
               </div>
             </div>
@@ -533,6 +644,9 @@
     lockChainsPanel.innerHTML = analysis.lockChains
       .slice(0, 12)
       .map(function mapChain(chain) {
+        var explanation = chain.cycle
+          ? "Threads in this chain are waiting on one another in a closed loop, which is a strong deadlock signal."
+          : "Follow the waiter count and root owner to find the thread currently blocking the rest of the chain.";
         return `
           <article class="chain-card ${chain.cycle ? "cycle-chain" : ""}">
             <div class="card-head">
@@ -547,6 +661,7 @@
             </div>
             <div class="card-body">${escapeHtml(chain.summary)}</div>
             <div class="comparison-list">
+              <div class="comparison-item">${escapeHtml(explanation)}</div>
               <div class="comparison-item"><strong>Waiters:</strong> ${escapeHtml(chain.waiters.join(", "))}</div>
               <div class="comparison-item"><strong>Owners:</strong> ${chain.owners.length ? escapeHtml(chain.owners.join(", ")) : "No visible owner"}</div>
               <div class="comparison-item"><strong>Monitor:</strong> ${escapeHtml(chain.monitor)}</div>
@@ -625,9 +740,10 @@
             comparison.recurringHotspots.length
               ? comparison.recurringHotspots
                   .map(function mapHotspot(item) {
+                    var hotspotState = item.state && item.state !== "UNKNOWN" ? " Dominant state: " + formatState(item.state) + "." : "";
                     return `
                       <div class="comparison-item">
-                        <strong>${escapeHtml(item.topFrame)}</strong> reappeared in ${item.appearances} snapshots, peaking at ${item.maxSize} matching threads.
+                        <strong>${escapeHtml(item.topFrame)}</strong> reappeared in ${item.appearances} snapshots, peaking at ${item.maxSize} matching thread${item.maxSize === 1 ? "" : "s"}.${escapeHtml(hotspotState)}
                       </div>
                     `;
                   })
@@ -937,6 +1053,8 @@
                       <div class="comparison-item">
                         <strong>${escapeHtml(thread.name)}</strong><br />
                         ${formatState(thread.fromState)} -> ${formatState(thread.toState)}<br />
+                        Wait: ${escapeHtml(thread.fromWait)} -> ${escapeHtml(thread.toWait)}<br />
+                        Pool: ${escapeHtml(thread.fromPool)} -> ${escapeHtml(thread.toPool)}<br />
                         ${escapeHtml(thread.fromFrame)}<br />
                         to<br />
                         ${escapeHtml(thread.toFrame)}
@@ -1014,23 +1132,29 @@
     var query;
     var state;
     var filtered;
+    var visible;
 
     if (!analysis || !analysis.parsed) {
       threadListEl.className = "thread-list empty-state";
       threadListEl.textContent = "No thread data yet.";
+      updateThreadListControls(0, 0);
       return;
     }
 
     query = threadSearch.value.trim().toLowerCase();
     state = stateFilter.value;
 
-    filtered = analysis.threads.filter(function filterThread(thread) {
+    filtered = sortThreadsForDisplay(analysis.threads).filter(function filterThread(thread) {
+      var waits = thread.waitingOn.concat(thread.parkingToWaitFor).join(" ").toLowerCase();
+      var held = thread.lockedMonitors.concat(thread.rawSynchronizers).join(" ").toLowerCase();
       var matchesQuery =
         !query ||
         thread.name.toLowerCase().indexOf(query) >= 0 ||
         thread.topFrame.toLowerCase().indexOf(query) >= 0 ||
         thread.header.toLowerCase().indexOf(query) >= 0 ||
-        thread.poolName.toLowerCase().indexOf(query) >= 0;
+        thread.poolName.toLowerCase().indexOf(query) >= 0 ||
+        waits.indexOf(query) >= 0 ||
+        held.indexOf(query) >= 0;
       var matchesState = state === "ALL" || thread.state === state;
       return matchesQuery && matchesState;
     });
@@ -1038,13 +1162,16 @@
     if (!filtered.length) {
       threadListEl.className = "thread-list empty-state";
       threadListEl.textContent = "No threads match the current filter.";
+      updateThreadListControls(0, 0);
       return;
     }
 
+    visible = filtered.slice(0, visibleThreadCount);
     threadListEl.className = "thread-list";
-    threadListEl.innerHTML = filtered
+    threadListEl.innerHTML = visible
       .map(function mapThread(thread) {
         var waited = thread.waitingOn.concat(thread.parkingToWaitFor);
+        var held = thread.lockedMonitors.concat(thread.rawSynchronizers);
         return `
           <article class="thread-card state-${thread.state}">
             <div class="card-head">
@@ -1056,19 +1183,25 @@
                   <span class="pill">${escapeHtml(thread.poolCategory)}</span>
                   ${thread.daemon ? `<span class="pill">daemon</span>` : ""}
                   ${thread.prio ? `<span class="pill">prio ${thread.prio}</span>` : ""}
+                  ${thread.nid ? `<span class="pill">nid ${escapeHtml(thread.nid)}</span>` : ""}
+                  ${thread.stateInferredFromHeader ? `<span class="pill">state inferred</span>` : ""}
                 </div>
               </div>
             </div>
             <div class="card-body">
               <div><strong>Top frame:</strong> ${escapeHtml(thread.topFrame)}</div>
               <div><strong>Waiting on:</strong> ${waited.length ? escapeHtml(waited.join(", ")) : "None detected"}</div>
-              <div><strong>Locked monitors:</strong> ${thread.lockedMonitors.length ? escapeHtml(thread.lockedMonitors.join(", ")) : "None detected"}</div>
+              <div><strong>Locked monitors:</strong> ${held.length ? escapeHtml(held.join(", ")) : "None detected"}</div>
             </div>
-            <pre class="thread-stack">${escapeHtml(thread.stack.join("\n") || "No Java frames captured")}</pre>
+            <details class="thread-stack-wrap">
+              <summary>Stack ${thread.stack.length ? "(" + thread.stack.length + " frame" + (thread.stack.length === 1 ? "" : "s") + ")" : ""}</summary>
+              <pre class="thread-stack">${escapeHtml(thread.stack.join("\n") || "No Java frames captured")}</pre>
+            </details>
           </article>
         `;
       })
       .join("");
+    updateThreadListControls(filtered.length, visible.length);
   }
 
   function buildExportPayload() {
@@ -1296,46 +1429,7 @@
     setExportStatus("Exported " + exportFormatSelect.value.toUpperCase() + " report with the current analysis snapshot.");
   }
 
-  function resetView() {
-    currentAnalysis = null;
-    currentComparison = null;
-    currentSnapshots = [];
-    selectedHistoryKey = "";
-    selectedDiffLeftId = "";
-    selectedDiffRightId = "";
-    renderHeroStats(null);
-    renderSummary(null);
-    renderFindings(null);
-    renderLockGraph(null);
-    renderPoolInsights(null);
-    renderLockChains(null);
-    renderComparison(null);
-    renderTimeline(null);
-    renderOwnershipView(null, null);
-    renderHistorySelector(null);
-    renderThreadHistory(null);
-    syncDiffSelectors(null);
-    renderSnapshotDiff(null);
-    renderStateFilter(null);
-    renderThreads(null);
-    setExportStatus("Export the current analysis as Markdown, HTML, or JSON.");
-  }
-
-  function runAnalysis() {
-    var input = dumpInput.value.trim();
-    var usedExplicitSeparator;
-
-    if (!input) {
-      resetView();
-      setStatus("Paste or upload a thread dump to begin.");
-      return;
-    }
-
-    usedExplicitSeparator = /^\s*=+\s*SNAPSHOT\s*=+\s*$/im.test(input);
-    currentSnapshots = detectSnapshots(input);
-    currentAnalysis = analyzeDump(currentSnapshots[currentSnapshots.length - 1].text);
-    currentComparison = compareSnapshots(currentSnapshots);
-
+  function renderAnalysisViews() {
     renderHeroStats(currentAnalysis);
     renderSummary(currentAnalysis);
     renderFindings(currentAnalysis);
@@ -1351,40 +1445,229 @@
     renderSnapshotDiff(currentComparison);
     renderStateFilter(currentAnalysis);
     renderThreads(currentAnalysis);
+  }
+
+  function resetView() {
+    analysisRequestSerial += 1;
+    currentAnalysis = null;
+    currentComparison = null;
+    currentSnapshots = [];
+    selectedHistoryKey = "";
+    selectedDiffLeftId = "";
+    selectedDiffRightId = "";
+    resetVisibleThreadCount();
+    setBusy(false);
+    renderAnalysisViews();
+    updateThreadListControls(0, 0);
+    setExportStatus("Export the current analysis as Markdown, HTML, or JSON.");
+  }
+
+  function setAnalysisError(message) {
+    findingsEl.className = "stack-list";
+    findingsEl.innerHTML = `
+      <article class="finding-card severity-high">
+        <div class="card-head">
+          <div>
+            <h3>Analysis error</h3>
+            <div class="pill-row">
+              <span class="pill">Input issue</span>
+            </div>
+          </div>
+        </div>
+        <p class="card-body">${escapeHtml(message)}</p>
+      </article>
+    `;
+  }
+
+  function runAnalysisNow(input) {
+    var usedExplicitSeparator = /^\s*=+\s*SNAPSHOT\s*=+\s*$/im.test(input);
+
+    currentSnapshots = detectSnapshots(input);
+    currentAnalysis = analyzeDump(currentSnapshots[currentSnapshots.length - 1].text);
+    currentComparison = compareSnapshots(currentSnapshots);
+
+    renderAnalysisViews();
     setExportStatus("Export the current analysis as Markdown, HTML, or JSON.");
 
-    if (currentAnalysis.parsed) {
-      if (currentComparison.comparable && !usedExplicitSeparator) {
-        setStatus("Auto-detected " + currentSnapshots.length + " snapshots from log-style input and parsed " + currentAnalysis.threadCount + " threads in the latest dump.");
-      } else if (currentComparison.comparable) {
-        setStatus("Compared " + currentSnapshots.length + " snapshots and parsed " + currentAnalysis.threadCount + " threads in the latest dump.");
-      } else {
-        setStatus("Parsed " + currentAnalysis.threadCount + " threads with " + currentAnalysis.findings.length + " prioritized finding" + (currentAnalysis.findings.length === 1 ? "" : "s") + ".");
-      }
-    } else {
+    if (!currentAnalysis.parsed) {
       setStatus("No recognizable thread headers were found.");
+      return;
+    }
+
+    if (currentComparison.comparable && !usedExplicitSeparator) {
+      setStatus(
+        "Auto-detected " +
+          currentSnapshots.length +
+          " snapshots from log-style input and parsed " +
+          currentAnalysis.threadCount +
+          " threads in the latest dump" +
+          formatParseNoteSuffix(currentAnalysis, "with"),
+      );
+      return;
+    }
+
+    if (currentComparison.comparable) {
+      setStatus(
+        "Compared " +
+          currentSnapshots.length +
+          " snapshots and parsed " +
+          currentAnalysis.threadCount +
+          " threads in the latest dump" +
+          formatParseNoteSuffix(currentAnalysis, "with"),
+      );
+      return;
+    }
+
+    setStatus(
+      "Parsed " +
+        currentAnalysis.threadCount +
+        " threads with " +
+        currentAnalysis.findings.length +
+        " prioritized finding" +
+        (currentAnalysis.findings.length === 1 ? "" : "s") +
+        formatParseNoteSuffix(currentAnalysis, "and"),
+    );
+  }
+
+  function queueAnalysis(input) {
+    var trimmed = (input || "").trim();
+    var requestId;
+
+    if (!trimmed) {
+      resetView();
+      setStatus("Paste or upload a thread dump to begin.");
+      return;
+    }
+
+    requestId = analysisRequestSerial + 1;
+    analysisRequestSerial = requestId;
+    resetVisibleThreadCount();
+    setBusy(true, "Analyzing locally in your browser...");
+
+    setTimeout(function executeQueuedAnalysis() {
+      if (requestId !== analysisRequestSerial) {
+        return;
+      }
+
+      try {
+        runAnalysisNow(trimmed);
+      } catch (error) {
+        resetView();
+        setAnalysisError(error && error.message ? error.message : "Unexpected failure while parsing the dump.");
+        setStatus("Analysis failed. Review the input format and try again.");
+      }
+
+      setBusy(false);
+    }, 0);
+  }
+
+  function loadTextIntoAnalyzer(text) {
+    dumpInput.value = text;
+    queueAnalysis(text);
+  }
+
+  function handleFileReadError(error) {
+    setBusy(false);
+    if (!currentAnalysis || !currentAnalysis.parsed) {
+      setAnalysisError(error && error.message ? error.message : "The browser could not read the selected file.");
+    }
+    setStatus("Unable to read the selected file locally.");
+  }
+
+  function loadSingleFile(file) {
+    if (!file) {
+      return;
+    }
+
+    setBusy(true, "Reading " + (file.name || "thread dump") + " locally...");
+    file
+      .text()
+      .then(function applyFileText(text) {
+        setBusy(false);
+        loadTextIntoAnalyzer(text);
+      })
+      .catch(handleFileReadError);
+  }
+
+  function loadMultipleFiles(files) {
+    if (!files.length) {
+      return;
+    }
+
+    setBusy(true, "Reading " + files.length + " files locally...");
+    Promise.all(
+      files.map(function mapFile(file, index) {
+        return file.text().then(function mapText(text) {
+          return {
+            label: file.name || "Snapshot " + (index + 1),
+            text: text,
+          };
+        });
+      }),
+    )
+      .then(function applySnapshots(snapshots) {
+        var combinedText = snapshots
+          .map(function mapSnapshot(snapshot) {
+            return snapshot.text.trim();
+          })
+          .join("\n\n===== SNAPSHOT =====\n\n");
+
+        setBusy(false);
+        loadTextIntoAnalyzer(combinedText);
+      })
+      .catch(handleFileReadError);
+  }
+
+  function handleDroppedData(event) {
+    var transfer = event.dataTransfer || {};
+    var files = Array.prototype.slice.call(transfer.files || []);
+    var text = transfer.getData ? transfer.getData("text/plain") : "";
+
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+
+    isDropZoneActive = false;
+    renderDropZoneState();
+
+    if (files.length > 1) {
+      loadMultipleFiles(files);
+      return;
+    }
+
+    if (files.length === 1) {
+      loadSingleFile(files[0]);
+      return;
+    }
+
+    if (text && text.trim()) {
+      loadTextIntoAnalyzer(text);
     }
   }
 
   sampleBtn.addEventListener("click", function loadSample() {
-    dumpInput.value = sampleLogText;
-    runAnalysis();
+    loadTextIntoAnalyzer(sampleLogText);
   });
 
-  analyzeBtn.addEventListener("click", runAnalysis);
+  analyzeBtn.addEventListener("click", function analyzeCurrentInput() {
+    queueAnalysis(dumpInput.value);
+  });
 
   clearBtn.addEventListener("click", function clearAll() {
     dumpInput.value = "";
     threadSearch.value = "";
+    stateFilter.value = "ALL";
     resetView();
     setStatus("Ready");
   });
 
   threadSearch.addEventListener("input", function rerenderThreads() {
+    resetVisibleThreadCount();
     renderThreads(currentAnalysis);
   });
 
   stateFilter.addEventListener("change", function rerenderThreads() {
+    resetVisibleThreadCount();
     renderThreads(currentAnalysis);
   });
 
@@ -1415,60 +1698,44 @@
   });
 
   exportBtn.addEventListener("click", handleExportReport);
+  loadMoreThreadsBtn.addEventListener("click", function showMoreThreads() {
+    visibleThreadCount += THREAD_RENDER_BATCH;
+    renderThreads(currentAnalysis);
+  });
 
   fileInput.addEventListener("change", function handleSingleFile(event) {
-    var file = event.target.files && event.target.files[0];
-    if (!file) {
-      return;
-    }
-
-    file.text().then(function applyFileText(text) {
-      dumpInput.value = text;
-      runAnalysis();
-    });
+    loadSingleFile(event.target.files && event.target.files[0]);
   });
 
   multiFileInput.addEventListener("change", function handleMultipleFiles(event) {
-    var files = Array.prototype.slice.call(event.target.files || []);
-
-    if (!files.length) {
-      return;
-    }
-
-    Promise.all(
-      files.map(function mapFile(file, index) {
-        return file.text().then(function mapText(text) {
-          return {
-            label: file.name || "Snapshot " + (index + 1),
-            text: text,
-          };
-        });
-      }),
-    ).then(function applySnapshots(snapshots) {
-      dumpInput.value = snapshots
-        .map(function mapSnapshot(snapshot) {
-          return snapshot.text.trim();
-        })
-        .join("\n\n===== SNAPSHOT =====\n\n");
-      runAnalysis();
-    });
+    loadMultipleFiles(Array.prototype.slice.call(event.target.files || []));
   });
 
+  if (dropZone) {
+    ["dragenter", "dragover"].forEach(function bindDrag(type) {
+      dropZone.addEventListener(type, function activateDropZone(event) {
+        if (event.preventDefault) {
+          event.preventDefault();
+        }
+        isDropZoneActive = true;
+        renderDropZoneState();
+      });
+    });
+
+    ["dragleave", "dragend"].forEach(function bindDragEnd(type) {
+      dropZone.addEventListener(type, function deactivateDropZone(event) {
+        if (event.preventDefault) {
+          event.preventDefault();
+        }
+        isDropZoneActive = false;
+        renderDropZoneState();
+      });
+    });
+
+    dropZone.addEventListener("drop", handleDroppedData);
+  }
+
   resetView();
-  renderHeroStats(null);
-  renderSummary(null);
-  renderFindings(null);
-  renderLockGraph(null);
-  renderPoolInsights(null);
-  renderLockChains(null);
-  renderComparison(null);
-  renderTimeline(null);
-  renderOwnershipView(null, null);
-  renderHistorySelector(null);
-  renderThreadHistory(null);
-  syncDiffSelectors(null);
-  renderSnapshotDiff(null);
-  renderStateFilter(null);
-  renderThreads(null);
+  renderDropZoneState();
   setStatus("Ready");
 })();

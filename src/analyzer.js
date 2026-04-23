@@ -20,8 +20,21 @@ function trimNumericSuffix(value) {
   return value.replace(/-\d+$/, "");
 }
 
+function normalizeText(text) {
+  return (text || "").replace(/\r\n/g, "\n");
+}
+
+function uniquePush(items, value) {
+  if (!value) {
+    return;
+  }
+  if (items.indexOf(value) < 0) {
+    items.push(value);
+  }
+}
+
 function isThreadHeaderLine(line) {
-  return /^".*"/.test(line || "");
+  return /^\s*".*"/.test(line || "");
 }
 
 function isSnapshotSeparatorLine(line) {
@@ -58,25 +71,64 @@ function detectBoundaryLabel(line) {
   return null;
 }
 
+function inferStateFromHeader(header) {
+  var normalized = (header || "").toLowerCase();
+
+  if (!normalized) {
+    return "UNKNOWN";
+  }
+  if (normalized.indexOf("waiting for monitor entry") >= 0 || normalized.indexOf("blocked") >= 0) {
+    return "BLOCKED";
+  }
+  if (normalized.indexOf("sleeping") >= 0) {
+    return "TIMED_WAITING";
+  }
+  if (normalized.indexOf("waiting on condition") >= 0 || normalized.indexOf("in object.wait()") >= 0) {
+    return "WAITING";
+  }
+  if (normalized.indexOf("runnable") >= 0) {
+    return "RUNNABLE";
+  }
+  return "UNKNOWN";
+}
+
+function extractMonitorReference(line, pattern) {
+  var match = (line || "").match(pattern);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    id: match[1],
+    type: match[2] || "",
+  };
+}
+
 function extractThreadBlocks(text) {
-  var normalized = text.replace(/\r\n/g, "\n");
-  var matches = [];
-  var pattern = /^".*$/gm;
-  var match;
+  var lines = normalizeText(text).split("\n");
+  var blocks = [];
+  var current = [];
 
-  while ((match = pattern.exec(normalized)) !== null) {
-    matches.push(match);
-  }
+  lines.forEach(function consumeLine(line) {
+    if (isThreadHeaderLine(line)) {
+      if (current.length) {
+        blocks.push(current.join("\n").trim());
+      }
+      current = [line];
+      return;
+    }
 
-  if (!matches.length) {
-    return [];
-  }
-
-  return matches.map(function buildBlock(entry, index) {
-    var start = entry.index;
-    var end = index + 1 < matches.length ? matches[index + 1].index : normalized.length;
-    return normalized.slice(start, end).trim();
+    if (current.length) {
+      current.push(line);
+    }
   });
+
+  if (current.length) {
+    blocks.push(current.join("\n").trim());
+  }
+
+  return blocks.filter(Boolean);
 }
 
 function finalizeDetectedSnapshot(snapshots, lines, label) {
@@ -97,7 +149,7 @@ function finalizeDetectedSnapshot(snapshots, lines, label) {
 }
 
 function detectSnapshotsFromText(text) {
-  var normalized = (text || "").replace(/\r\n/g, "\n").trim();
+  var normalized = normalizeText(text).trim();
   var lines;
   var snapshots = [];
   var currentLines = [];
@@ -190,15 +242,14 @@ function parseThread(block) {
   var waitingOn = [];
   var parkingToWaitFor = [];
   var rawSynchronizers = [];
+  var monitorTypes = {};
+  var parseNotes = [];
+  var stateInferredFromHeader = false;
 
   lines.slice(1).forEach(function consumeLine(line) {
     var trimmed = line.trim();
     var stateMatch;
-    var ownedMonitorMatch;
-    var waitingMonitorMatch;
-    var waitingOnMatch;
-    var parkingMatch;
-    var synchronizerMatch;
+    var monitorRef;
 
     if (!trimmed) {
       return;
@@ -215,35 +266,76 @@ function parseThread(block) {
       return;
     }
 
-    ownedMonitorMatch = trimmed.match(/^- locked <([^>]+)>/);
-    if (ownedMonitorMatch) {
-      lockedMonitors.push(ownedMonitorMatch[1]);
+    monitorRef = extractMonitorReference(trimmed, /^- locked <([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(lockedMonitors, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
       return;
     }
 
-    waitingMonitorMatch = trimmed.match(/^- waiting to lock <([^>]+)>/);
-    if (waitingMonitorMatch) {
-      waitingOn.push(waitingMonitorMatch[1]);
+    monitorRef = extractMonitorReference(trimmed, /^- waiting to lock <([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(waitingOn, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
       return;
     }
 
-    waitingOnMatch = trimmed.match(/^- waiting on <([^>]+)>/);
-    if (waitingOnMatch) {
-      waitingOn.push(waitingOnMatch[1]);
+    monitorRef = extractMonitorReference(trimmed, /^- waiting on <([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(waitingOn, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
       return;
     }
 
-    parkingMatch = trimmed.match(/^- parking to wait for <([^>]+)>/);
-    if (parkingMatch) {
-      parkingToWaitFor.push(parkingMatch[1]);
+    monitorRef = extractMonitorReference(trimmed, /^- waiting to re-lock in wait\(\) <([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(waitingOn, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
       return;
     }
 
-    synchronizerMatch = trimmed.match(/^- <([^>]+)>/);
-    if (synchronizerMatch) {
-      rawSynchronizers.push(synchronizerMatch[1]);
+    monitorRef = extractMonitorReference(trimmed, /^- parking to wait for\s+<([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(parkingToWaitFor, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
+      return;
+    }
+
+    monitorRef = extractMonitorReference(trimmed, /^- <([^>]+)>(?: \(([^)]+)\))?/);
+    if (monitorRef) {
+      uniquePush(rawSynchronizers, monitorRef.id);
+      if (monitorRef.type) {
+        monitorTypes[monitorRef.id] = monitorRef.type;
+      }
+      return;
+    }
+
+    if (/^Locked ownable synchronizers:/i.test(trimmed) || trimmed === "- None") {
+      return;
     }
   });
+
+  if (javaState === "UNKNOWN") {
+    javaState = inferStateFromHeader(header);
+    stateInferredFromHeader = javaState !== "UNKNOWN";
+    if (stateInferredFromHeader) {
+      parseNotes.push("State inferred from the thread header.");
+    }
+  }
+
+  if (!stack.length) {
+    parseNotes.push("No Java stack frame captured.");
+  }
 
   return {
     name: getMatchGroup(nameMatch, 1) || "Unknown Thread",
@@ -261,6 +353,9 @@ function parseThread(block) {
     waitingOn: waitingOn,
     parkingToWaitFor: parkingToWaitFor,
     rawSynchronizers: rawSynchronizers,
+    monitorTypes: monitorTypes,
+    parseNotes: parseNotes,
+    stateInferredFromHeader: stateInferredFromHeader,
     fingerprint: stack.slice(0, 8).join("\n"),
   };
 }
@@ -290,16 +385,18 @@ function buildMonitorSummaries(threads) {
     var waitsFor = thread.waitingOn.concat(thread.parkingToWaitFor);
     waitsFor.forEach(function addWait(monitor) {
       if (!monitors.has(monitor)) {
-        monitors.set(monitor, { monitor: monitor, owners: [], waiters: [] });
+        monitors.set(monitor, { monitor: monitor, types: [], owners: [], waiters: [] });
       }
-      monitors.get(monitor).waiters.push(thread.name);
+      uniquePush(monitors.get(monitor).waiters, thread.name);
+      uniquePush(monitors.get(monitor).types, thread.monitorTypes[monitor]);
     });
 
     thread.lockedMonitors.concat(thread.rawSynchronizers).forEach(function addOwner(monitor) {
       if (!monitors.has(monitor)) {
-        monitors.set(monitor, { monitor: monitor, owners: [], waiters: [] });
+        monitors.set(monitor, { monitor: monitor, types: [], owners: [], waiters: [] });
       }
-      monitors.get(monitor).owners.push(thread.name);
+      uniquePush(monitors.get(monitor).owners, thread.name);
+      uniquePush(monitors.get(monitor).types, thread.monitorTypes[monitor]);
     });
   });
 
@@ -324,34 +421,98 @@ function buildOwnerMap(monitorData) {
   return ownerMap;
 }
 
+function normalizeCycleKey(cycle) {
+  var values = [];
+  var reversed = cycle.slice().reverse();
+  var index;
+
+  if (!cycle.length) {
+    return "";
+  }
+
+  for (index = 0; index < cycle.length; index += 1) {
+    values.push(cycle.slice(index).concat(cycle.slice(0, index)).join("|"));
+    values.push(reversed.slice(index).concat(reversed.slice(0, index)).join("|"));
+  }
+
+  values.sort();
+  return values[0];
+}
+
 function detectDeadlockCycles(waitGraph) {
   var cycles = [];
-  var visited = new Set();
+  var seen = new Set();
+  var visiting = new Set();
+  var explored = new Set();
+  var stack = [];
 
-  function dfs(node, path) {
+  function dfs(node) {
     var next = waitGraph.get(node) || [];
 
-    if (path.indexOf(node) >= 0) {
-      var cycleStart = path.indexOf(node);
-      var cycle = path.slice(cycleStart);
-      var normalized = cycle.slice().sort().join("|");
-      if (!visited.has(normalized)) {
-        visited.add(normalized);
-        cycles.push(cycle);
-      }
-      return;
-    }
+    visiting.add(node);
+    stack.push(node);
 
     next.forEach(function walkNeighbor(neighbor) {
-      dfs(neighbor, path.concat(node));
+      var cycleStart;
+      var cycle;
+      var key;
+
+      if (visiting.has(neighbor)) {
+        cycleStart = stack.indexOf(neighbor);
+        if (cycleStart >= 0) {
+          cycle = stack.slice(cycleStart);
+          key = normalizeCycleKey(cycle);
+          if (!seen.has(key)) {
+            seen.add(key);
+            cycles.push(cycle);
+          }
+        }
+        return;
+      }
+
+      if (!explored.has(neighbor)) {
+        dfs(neighbor);
+      }
     });
+
+    stack.pop();
+    visiting.delete(node);
+    explored.add(node);
   }
 
   Array.from(waitGraph.keys()).forEach(function walkNode(node) {
-    dfs(node, []);
+    if (!explored.has(node)) {
+      dfs(node);
+    }
   });
 
   return cycles;
+}
+
+function buildDeadlockDetails(cycles, waitRelations) {
+  return cycles.map(function mapCycle(cycle) {
+    var steps = cycle.map(function mapStep(threadName, index) {
+      var owner = cycle[(index + 1) % cycle.length];
+      var match = (waitRelations.get(threadName) || []).find(function findRelation(relation) {
+        return relation.owner === owner;
+      });
+      return {
+        waitingThread: threadName,
+        owner: owner,
+        monitor: match ? match.monitor : "unknown",
+      };
+    });
+
+    return {
+      cycle: cycle.slice(),
+      steps: steps,
+      explanation: steps
+        .map(function describeStep(step) {
+          return step.waitingThread + " waits on <" + step.monitor + "> held by " + step.owner;
+        })
+        .join(". ") + ".",
+    };
+  });
 }
 
 function summarizeHotspots(threads) {
@@ -627,7 +788,43 @@ function buildLockChains(threads, ownerMap, monitorData) {
     });
 }
 
-function buildFindings(threads, deadlockCycles, ownerMap, hotspots, poolGroups, lockChains) {
+function buildParseNotes(threads) {
+  var inferredStates = threads.filter(function filterInferred(thread) {
+    return thread.stateInferredFromHeader;
+  }).length;
+  var missingStacks = threads.filter(function filterMissingStack(thread) {
+    return !thread.stack.length;
+  }).length;
+  var unnamedThreads = threads.filter(function filterUnnamed(thread) {
+    return thread.name === "Unknown Thread";
+  }).length;
+  var notes = [];
+
+  if (inferredStates) {
+    notes.push(
+      inferredStates +
+        " thread" +
+        (inferredStates === 1 ? "" : "s") +
+        " " +
+        (inferredStates === 1 ? "was" : "were") +
+        " missing an explicit state line and " +
+        (inferredStates === 1 ? "was" : "were") +
+        " inferred from the header."
+    );
+  }
+
+  if (missingStacks) {
+    notes.push(missingStacks + " thread" + (missingStacks === 1 ? "" : "s") + " had no visible Java stack frames.");
+  }
+
+  if (unnamedThreads) {
+    notes.push(unnamedThreads + " thread" + (unnamedThreads === 1 ? "" : "s") + " could not be matched to a quoted thread name.");
+  }
+
+  return notes;
+}
+
+function buildFindings(threads, deadlockCycles, deadlockDetails, ownerMap, hotspots, poolGroups, lockChains, parseNotes) {
   var findings = [];
   var blocked = threads.filter(function filterBlocked(thread) {
     return thread.state === "BLOCKED";
@@ -651,11 +848,12 @@ function buildFindings(threads, deadlockCycles, ownerMap, hotspots, poolGroups, 
       return !ownerMap.has(entry.monitor);
     });
 
-  deadlockCycles.forEach(function addDeadlock(cycle) {
+  deadlockCycles.forEach(function addDeadlock(cycle, index) {
+    var detail = deadlockDetails[index];
     findings.push({
       severity: "high",
       title: "Potential deadlock cycle detected",
-      body: "Threads waiting on one another form a cycle: " + cycle.join(" -> ") + ".",
+      body: (detail ? detail.explanation + " " : "") + "Threads waiting on one another form a cycle: " + cycle.join(" -> ") + ".",
     });
   });
 
@@ -723,6 +921,14 @@ function buildFindings(threads, deadlockCycles, ownerMap, hotspots, poolGroups, 
     });
   }
 
+  if (parseNotes.length) {
+    findings.push({
+      severity: "low",
+      title: "Parser recovered from incomplete dump details",
+      body: parseNotes[0],
+    });
+  }
+
   if (!findings.length) {
     findings.push({
       severity: "low",
@@ -744,11 +950,15 @@ function analyzeThreadDump(text) {
   });
   var stateCounts = new Map();
   var waitGraph = new Map();
+  var waitRelations = new Map();
   var monitorData;
   var ownerMap;
   var hotspots;
   var poolGroups;
   var lockChains;
+  var deadlockCycles;
+  var deadlockDetails;
+  var parseNotes;
   var findings;
 
   threads.forEach(function attachPool(thread) {
@@ -770,26 +980,48 @@ function analyzeThreadDump(text) {
       if (!waitGraph.has(thread.name)) {
         waitGraph.set(thread.name, []);
       }
-      waitGraph.get(thread.name).push.apply(waitGraph.get(thread.name), owners);
+      if (!waitRelations.has(thread.name)) {
+        waitRelations.set(thread.name, []);
+      }
+      owners.forEach(function addOwner(owner) {
+        if (waitGraph.get(thread.name).indexOf(owner) < 0) {
+          waitGraph.get(thread.name).push(owner);
+        }
+        if (
+          !waitRelations.get(thread.name).some(function hasRelation(relation) {
+            return relation.owner === owner && relation.monitor === monitor;
+          })
+        ) {
+          waitRelations.get(thread.name).push({
+            owner: owner,
+            monitor: monitor,
+          });
+        }
+      });
     });
   });
 
   hotspots = summarizeHotspots(threads);
   poolGroups = summarizePools(threads);
   lockChains = buildLockChains(threads, ownerMap, monitorData);
-  findings = buildFindings(threads, detectDeadlockCycles(waitGraph), ownerMap, hotspots, poolGroups, lockChains);
+  deadlockCycles = detectDeadlockCycles(waitGraph);
+  deadlockDetails = buildDeadlockDetails(deadlockCycles, waitRelations);
+  parseNotes = buildParseNotes(threads);
+  findings = buildFindings(threads, deadlockCycles, deadlockDetails, ownerMap, hotspots, poolGroups, lockChains, parseNotes);
 
   return {
     parsed: threads.length > 0,
     threadCount: threads.length,
     threads: threads,
     findings: findings,
-    deadlockCycles: detectDeadlockCycles(waitGraph),
+    deadlockCycles: deadlockCycles,
+    deadlockDetails: deadlockDetails,
     hotspots: hotspots,
     stateCounts: groupCounts(stateCounts),
     monitors: monitorData.list,
     poolGroups: poolGroups,
     lockChains: lockChains,
+    parseNotes: parseNotes,
   };
 }
 

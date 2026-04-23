@@ -31,6 +31,10 @@ body {
     linear-gradient(180deg, #f7f2ea 0%, #f0e7d9 100%);
 }
 
+body.is-busy {
+  cursor: progress;
+}
+
 .page-shell {
   width: min(1400px, calc(100% - 32px));
   margin: 0 auto;
@@ -200,6 +204,49 @@ button:hover,
 
 .status-text {
   color: var(--muted);
+}
+
+.privacy-banner {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(42, 124, 98, 0.18);
+  background: rgba(240, 251, 246, 0.92);
+  color: var(--ok);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.drop-zone {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1.5px dashed rgba(72, 48, 31, 0.18);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 248, 240, 0.88));
+  color: var(--muted);
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.drop-zone strong {
+  color: var(--ink);
+}
+
+.drop-zone span {
+  font-size: 0.93rem;
+  line-height: 1.5;
+}
+
+.drop-zone.is-dragover {
+  border-color: rgba(177, 77, 41, 0.55);
+  background: linear-gradient(135deg, rgba(241, 209, 188, 0.86), rgba(255, 251, 245, 0.94));
+  transform: translateY(-1px);
+}
+
+.drop-zone.is-busy {
+  opacity: 0.75;
 }
 
 .summary-grid {
@@ -459,6 +506,61 @@ button:hover,
   border-radius: 14px;
 }
 
+.thread-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.thread-toolbar .status-text {
+  font-size: 0.92rem;
+}
+
+.thread-stack-wrap {
+  margin-top: 14px;
+  border-radius: 14px;
+  background: rgba(33, 22, 15, 0.04);
+  border: 1px solid rgba(72, 48, 31, 0.08);
+}
+
+.thread-stack-wrap summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 600;
+  color: var(--ink);
+  list-style: none;
+}
+
+.thread-stack-wrap summary::-webkit-details-marker {
+  display: none;
+}
+
+.thread-stack-wrap summary::after {
+  content: "Show stack";
+  float: right;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.thread-stack-wrap[open] summary::after {
+  content: "Hide stack";
+}
+
+.thread-stack-wrap .thread-stack {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+button[disabled],
+.file-button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
 .filters {
   min-width: min(420px, 100%);
 }
@@ -499,6 +601,7 @@ button:hover,
 
   .panel-header,
   .toolbar,
+  .thread-toolbar,
   .filters,
   .actions,
   .card-head {
